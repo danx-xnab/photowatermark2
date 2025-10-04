@@ -7,11 +7,9 @@ from PyQt5.QtWidgets import (
     QLineEdit, QGridLayout, QSplitter, QGroupBox, QFormLayout, QCheckBox,
     QFrame, QInputDialog, QMessageBox, QAction, QMenu, QMenuBar, QColorDialog, QSizePolicy, QScrollArea
 )
-from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QBrush, QPen, QFontDatabase
+from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QBrush, QPen, QFontDatabase, QImage
 from PyQt5.QtCore import Qt, QPoint, QSize
 from PIL import Image, ImageDraw, ImageFont
-import sys
-from PyQt5.QtGui import QImage
 
 class WatermarkApp(QMainWindow):
     def __init__(self):
@@ -43,7 +41,7 @@ class WatermarkApp(QMainWindow):
     def init_ui(self):
         # 设置窗口标题和大小，增大初始尺寸以便更好地显示预览
         self.setWindowTitle("图片水印工具")
-        self.setGeometry(100, 100, 1400, 900)
+        self.setGeometry(100, 100, 1600, 900)  # 增加窗口宽度，确保右侧菜单栏可以完整显示
         
         # 创建中央部件
         central_widget = QWidget()
@@ -120,7 +118,7 @@ class WatermarkApp(QMainWindow):
         # 创建右侧面板（设置）
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
-        right_panel.setMaximumWidth(350)
+        right_panel.setMaximumWidth(500)  # 增加最大宽度以完整显示所有选项
         
         # 创建滚动区域，放置所有设置项
         scroll_area = QScrollArea()
@@ -152,34 +150,20 @@ class WatermarkApp(QMainWindow):
         self.watermark_text = QLineEdit("水印文字")
         self.watermark_text.textChanged.connect(self.update_preview)
         
-        # 字体选择
-        self.font_family = QComboBox()
-        # 获取系统已安装字体
-        font_db = QFontDatabase()
-        for family in font_db.families():
-            self.font_family.addItem(family)
-        # 默认选择支持中文的字体
-        chinese_fonts = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC", "Microsoft YaHei", "SimSun"]
-        for font in chinese_fonts:
-            if font in font_db.families():
-                self.font_family.setCurrentText(font)
-                break
-        self.font_family.currentTextChanged.connect(self.update_preview)
-        
+        # 字体大小选择器
         self.font_size = QComboBox()
-        for size in range(10, 72, 2):
+        # 允许用户输入任意大小，并提供常用选项
+        self.font_size.setEditable(True)
+        for size in range(8, 120, 2):
             self.font_size.addItem(str(size))
         self.font_size.setCurrentText("24")
         self.font_size.currentTextChanged.connect(self.update_preview)
         
-        # 粗体和斜体
+        # 粗体选项
         style_layout = QHBoxLayout()
         self.bold_checkbox = QCheckBox("粗体")
-        self.italic_checkbox = QCheckBox("斜体")
         self.bold_checkbox.stateChanged.connect(self.update_preview)
-        self.italic_checkbox.stateChanged.connect(self.update_preview)
         style_layout.addWidget(self.bold_checkbox)
-        style_layout.addWidget(self.italic_checkbox)
         
         self.transparency = QSlider(Qt.Horizontal)
         self.transparency.setRange(0, 100)
@@ -245,7 +229,6 @@ class WatermarkApp(QMainWindow):
         effects_group.setLayout(effects_layout)
         
         text_watermark_layout.addRow("水印文本:", self.watermark_text)
-        text_watermark_layout.addRow("字体:", self.font_family)
         text_watermark_layout.addRow("字体大小:", self.font_size)
         text_watermark_layout.addRow("字体样式:", style_layout)
         text_watermark_layout.addRow(self.transparency_label, self.transparency)
@@ -450,8 +433,8 @@ class WatermarkApp(QMainWindow):
         main_splitter.addWidget(center_panel)
         main_splitter.addWidget(right_panel)
         
-        # 设置初始大小比例，给预览区域更多空间
-        main_splitter.setSizes([300, 800, 350])
+        # 设置初始大小比例，给预览区域更多空间，右侧面板初始宽度也增加到500
+        main_splitter.setSizes([300, 800, 500])
         
         # 将Splitter添加到主布局
         main_layout.addWidget(main_splitter)
@@ -742,81 +725,255 @@ class WatermarkApp(QMainWindow):
             g = int(color_code[3:5], 16)
             b = int(color_code[5:7], 16)
             
-            # 创建字体（从新的字体选择器获取）
+            # 创建字体（使用默认字体）
             font = None
-            font_family = self.font_family.currentText()
+            font_family = "SimHei"  # 使用默认中文字体
             bold = self.bold_checkbox.isChecked()
-            italic = self.italic_checkbox.isChecked()
+            italic = False  # 斜体功能已移除
             
-            # 尝试使用选择的字体
+            print(f"使用字体: {font_family}, 粗体: {bold}")
+            
             try:
-                # 首先尝试直接使用字体名称
-                font = ImageFont.truetype(font_family, font_size)
-            except:
-                # 如果直接使用字体名称失败，尝试查找字体文件
-                if os.name == 'nt':  # Windows系统
-                    windows_font_dir = r"C:\Windows\Fonts"
-                    # 尝试常见字体文件扩展名
-                    extensions = ['.ttf', '.ttc', '.otf']
-                    for ext in extensions:
-                        # 尝试不同的字体文件名格式
-                        font_files = [
-                            os.path.join(windows_font_dir, font_family.lower() + ext),
-                            os.path.join(windows_font_dir, font_family.replace(' ', '') + ext),
-                        ]
-                        for font_file in font_files:
-                            try:
-                                if os.path.exists(font_file):
-                                    font = ImageFont.truetype(font_file, font_size)
-                                    break
-                            except:
-                                continue
-                        if font is not None:
-                            break
-            
-            # 如果找不到选择的字体，回退到之前的逻辑
-            if font is None:
-                # 1. 尝试Windows系统字体目录中的中文字体
-                if os.name == 'nt':  # Windows系统
-                    windows_font_dir = r"C:\Windows\Fonts"
-                    chinese_fonts = [
-                        os.path.join(windows_font_dir, "simhei.ttf"),  # 黑体
-                        os.path.join(windows_font_dir, "msyh.ttc"),    # 微软雅黑
-                        os.path.join(windows_font_dir, "simsun.ttc"),  # 宋体
-                        os.path.join(windows_font_dir, "msyhbd.ttc")   # 微软雅黑粗体
-                    ]
+                # 验证字体大小是有效的数字
+                try:
+                    font_size = int(font_size) if isinstance(font_size, str) else font_size
+                    # 限制字体大小范围，防止过大或过小的字体导致问题
+                    font_size = max(4, min(font_size, 500))
+                except ValueError:
+                    print(f"无效的字体大小: {font_size}，使用默认大小24")
+                    font_size = 24
+                
+                # 构建常见中文字体的映射表
+                chinese_fonts_map = {
+                    'Microsoft YaHei': ['msyh.ttc', 'msyhbd.ttc', 'msyhl.ttc'],
+                    'SimHei': ['simhei.ttf'],
+                    'SimSun': ['simsun.ttc'],
+                    'KaiTi': ['simkai.ttf'],
+                    'FangSong': ['simfang.ttf'],
+                    'LiSu': ['lisu.ttf'],    # 隶书
+                    'YouYuan': ['youyuan.ttf'],  # 幼圆
+                    'DengXian': ['dengxian.ttc', 'dengxianbd.ttc']  # 等线
+                }
+                
+                # 初始化Windows字体目录路径（如果适用）
+                windows_font_dir = r"C:\Windows\Fonts" if os.name == 'nt' else None
+                
+                # 改进的字体加载策略
+                # 1. 首先尝试使用PIL的ImageFont.truetype直接加载字体
+                # 构建可能的字体变体名称
+                font_variants = []
+                if bold and italic:
+                    font_variants.extend([
+                        f"{font_family} Bold Italic",
+                        f"{font_family}-BoldItalic",
+                        f"{font_family} Bold-Italic",
+                        f"{font_family} BI"
+                    ])
+                elif bold:
+                    font_variants.extend([
+                        f"{font_family} Bold",
+                        f"{font_family}-Bold",
+                        f"{font_family}bd"
+                    ])
+                elif italic:
+                    font_variants.extend([
+                        f"{font_family} Italic",
+                        f"{font_family}-Italic",
+                        f"{font_family}i"
+                    ])
+                font_variants.append(font_family)
+                
+                print(f"尝试的字体变体: {font_variants}")
+                
+                # 尝试加载字体变体
+                for variant in font_variants:
+                    try:
+                        font = ImageFont.truetype(variant, font_size)
+                        print(f"成功加载字体变体: {variant}")
+                        break
+                    except Exception as e:
+                        print(f"无法加载字体变体 {variant}: {str(e)}")
+                        # 继续尝试下一个变体，不中断程序
+                        continue
+                
+                # 2. 如果直接使用字体名称失败且是Windows系统，尝试查找字体文件
+                if font is None and windows_font_dir and os.path.exists(windows_font_dir):
+                    print(f"在Windows字体目录中查找: {windows_font_dir}")
                     
-                    for font_path in chinese_fonts:
+                    # 构建搜索的字体文件列表
+                    font_files = []
+                    
+                    # 先检查是否是常见中文字体
+                    if font_family in chinese_fonts_map:
+                        # 根据粗体和斜体选择合适的字体文件
+                        if bold and italic and len(chinese_fonts_map[font_family]) > 3:
+                            font_files = [os.path.join(windows_font_dir, chinese_fonts_map[font_family][2])]
+                        elif bold and len(chinese_fonts_map[font_family]) > 1:
+                            font_files = [os.path.join(windows_font_dir, chinese_fonts_map[font_family][1])]
+                        else:
+                            font_files = [os.path.join(windows_font_dir, chinese_fonts_map[font_family][0])]
+                        print(f"添加常见中文字体文件路径: {font_files}")
+                    
+                    # 根据粗体和斜体设置构建可能的字体文件名
+                    if not font_files:
+                        base_name = font_family.lower().replace(' ', '')
+                        extensions = ['.ttf', '.ttc', '.otf', '.fon']
+                        
+                        # 构建可能的文件基础名称变体
+                        file_basenames = []
+                        if bold and italic:
+                            file_basenames.extend([base_name, base_name+'bi', base_name+'bdit', base_name+'bolditalic'])
+                        elif bold:
+                            file_basenames.extend([base_name, base_name+'bd', base_name+'bold'])
+                        elif italic:
+                            file_basenames.extend([base_name, base_name+'i', base_name+'italic'])
+                        else:
+                            file_basenames.append(base_name)
+                        
+                        # 去重
+                        file_basenames = list(set(file_basenames))
+                        print(f"尝试的字体文件基础名称: {file_basenames}")
+                        
+                        # 生成完整的文件路径
+                        for bn in file_basenames:
+                            for ext in extensions:
+                                font_files.append(os.path.join(windows_font_dir, bn + ext))
+                    
+                    # 尝试加载字体文件
+                    for font_file in font_files:
                         try:
-                            if os.path.exists(font_path):
-                                font = ImageFont.truetype(font_path, font_size)
+                            if os.path.exists(font_file):
+                                print(f"尝试加载字体文件: {font_file}")
+                                font = ImageFont.truetype(font_file, font_size)
+                                print(f"成功加载字体文件: {font_file}")
                                 break
-                        except:
+                        except Exception as e:
+                            print(f"无法加载字体文件 {font_file}: {str(e)}")
+                            # 继续尝试下一个文件，不中断程序
                             continue
                 
-                # 2. 如果没找到或不是Windows系统，尝试使用字体名称
+                # 3. 如果以上方法都失败，尝试通用的中文字体回退列表
                 if font is None:
-                    font_names = [
-                        "SimHei", "WenQuanYi Micro Hei", "Heiti TC", 
-                        "Microsoft YaHei", "SimSun", "Arial Unicode MS"
-                    ]
+                    print("尝试加载通用中文字体")
+                    fallback_fonts = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC", "Microsoft YaHei", "SimSun", "Arial Unicode MS"]
                     
-                    for font_name in font_names:
+                    for fallback_font in fallback_fonts:
                         try:
-                            font = ImageFont.truetype(font_name, font_size)
+                            font = ImageFont.truetype(fallback_font, font_size)
+                            print(f"成功加载回退字体: {fallback_font}")
                             break
-                        except:
+                        except Exception as e:
+                            print(f"无法加载回退字体 {fallback_font}: {str(e)}")
+                            # 继续尝试下一个回退字体，不中断程序
                             continue
                 
-                # 3. 如果还是找不到，使用默认字体并记录警告
+                # 4. 最终回退：使用PIL自带的默认字体
                 if font is None:
-                    print("警告: 无法加载支持中文的字体，可能导致中文显示异常")
+                    print("无法加载任何指定字体，使用PIL默认字体作为最终回退")
                     font = ImageFont.load_default()
+                    # 打印默认字体的信息
+                    print(f"使用默认字体: {font.getname() if hasattr(font, 'getname') else 'Default Font'}")
+            except Exception as e:
+                print(f"字体加载过程中发生严重错误: {str(e)}")
+                # 发生任何异常时，使用默认字体作为最后的保障
+                try:
+                    font = ImageFont.load_default()
+                    print("已回退到默认字体")
+                except:
+                    # 如果连默认字体都加载失败，创建一个简单的字体对象
+                    # 这是最后的安全保障，确保程序不会因字体问题而崩溃
+                    print("警告: 无法加载默认字体，程序可能无法正确显示文本")
+                    # 创建一个功能更完整的DummyFont对象，支持中文文本处理
+                    class DummyFont:
+                        def __init__(self, size=font_size):
+                            self.size = size
+                        def getsize(self, text):
+                            # 估算文本尺寸，确保中文能被正确处理
+                            try:
+                                # 对于中文，每个字符大约占一个半英文字符宽度
+                                width = len(text) * self.size // 2
+                                for char in text:
+                                    if ord(char) > 127:  # 非ASCII字符（如中文）
+                                        width += self.size // 4
+                                return (width, self.size)
+                            except:
+                                return (len(text) * self.size // 2, self.size)
+                        def getname(self):
+                            return ("DummyFont", "Regular")
+                        def getbbox(self, text, *args, **kwargs):
+                            # 实现getbbox方法以避免在处理中文时出错
+                            width, height = self.getsize(text)
+                            return (0, -height // 2, width, height // 2)
+                    font = DummyFont(font_size)
+            
+            # 应用斜体效果（如果需要）
+            if italic:
+                try:
+                    # 首先尝试加载专门的斜体字体文件
+                    italic_font = None
+                    if os.name == 'nt' and font_family in chinese_fonts_map and len(chinese_fonts_map[font_family]) > 2:
+                        italic_font_path = os.path.join(windows_font_dir, chinese_fonts_map[font_family][2])
+                        if os.path.exists(italic_font_path):
+                            italic_font = ImageFont.truetype(italic_font_path, font_size)
+                            font = italic_font
+                            print(f"已加载专门的斜体字体文件: {italic_font_path}")
+                    
+                    # 如果没有专门的斜体字体文件，尝试使用字体变换创建伪斜体效果
+                    if italic_font is None:
+                        # 使用PIL的ImageDraw方法实现伪斜体
+                        # 我们会在绘制文本时应用斜体变换
+                        print("无法加载专门的斜体字体文件，将在绘制时应用伪斜体效果")
+                except Exception as e:
+                    print(f"无法应用斜体效果: {str(e)}")
+                    # 如果变换失败，保持原字体
+                    pass
             
             # 获取文本尺寸
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
+            # 对于斜体文本，我们需要调整计算方式
+            try:
+                if italic:
+                    # 创建一个临时的图像来测量斜体文本的尺寸
+                    temp_img = Image.new('RGBA', (1000, 1000), (255, 255, 255, 0))
+                    temp_draw = ImageDraw.Draw(temp_img)
+                    # 正常文本的尺寸
+                    try:
+                        bbox = temp_draw.textbbox((0, 0), text, font=font)
+                        text_width = bbox[2] - bbox[0]
+                        text_height = bbox[3] - bbox[1]
+                    except UnicodeEncodeError:
+                        print(f"计算斜体文本尺寸时出现编码错误")
+                        # 使用简化方法估算文本尺寸
+                        width_ratio = 1.5 if any(ord(char) > 127 for char in text) else 1.0
+                        text_width = int(len(text) * font_size * 0.5 * width_ratio)
+                        text_height = font_size
+                    except Exception as e:
+                        print(f"计算斜体文本尺寸时出错: {str(e)}")
+                        # 使用简化方法估算文本尺寸
+                        text_width = len(text) * font_size // 2
+                        text_height = font_size
+                    # 斜体文本通常比正常文本宽10-15%
+                    text_width = int(text_width * 1.15)
+                else:
+                    try:
+                        bbox = draw.textbbox((0, 0), text, font=font)
+                        text_width = bbox[2] - bbox[0]
+                        text_height = bbox[3] - bbox[1]
+                    except UnicodeEncodeError:
+                        print(f"计算文本尺寸时出现编码错误")
+                        # 使用简化方法估算文本尺寸
+                        width_ratio = 1.5 if any(ord(char) > 127 for char in text) else 1.0
+                        text_width = int(len(text) * font_size * 0.5 * width_ratio)
+                        text_height = font_size
+                    except Exception as e:
+                        print(f"计算文本尺寸时出错: {str(e)}")
+                        # 使用简化方法估算文本尺寸
+                        text_width = len(text) * font_size // 2
+                        text_height = font_size
+            except Exception as e:
+                print(f"获取文本尺寸时发生严重错误: {str(e)}")
+                # 使用安全的默认值
+                text_width = len(text) * font_size // 2
+                text_height = font_size
             
             # 调整水印位置到图片坐标系
             img_width, img_height = img.size
@@ -850,7 +1007,100 @@ class WatermarkApp(QMainWindow):
                          fill=(0, 0, 0, int(128 * (100 - transparency) / 100)))
             
             # 绘制主文本
-            draw.text((pos_x, pos_y), text, font=font, fill=fill_color)
+            try:
+                # 如果需要粗体效果但没有加载到粗体字体文件，手动模拟粗体
+                if bold and self.stroke_checkbox.isChecked() == False:
+                    # 通过在文本周围绘制多个偏移的文本实现伪粗体效果
+                    # 绘制伪粗体（四个方向的偏移文本）
+                    bold_offset = 1
+                    for x_offset in range(-bold_offset, bold_offset + 1):
+                        for y_offset in range(-bold_offset, bold_offset + 1):
+                            if x_offset != 0 or y_offset != 0:  # 避免重复绘制中心文本
+                                try:
+                                    draw.text((pos_x + x_offset, pos_y + y_offset), text, font=font, fill=fill_color)
+                                except:
+                                    pass
+                
+                if italic:
+                    # 应用伪斜体效果（通过变换坐标）
+                    # 使用一个简单的剪切变换来创建斜体效果
+                    try:
+                        # 保存原始文本的边界框
+                        original_bbox = draw.textbbox((pos_x, pos_y), text, font=font)
+                        original_center = ((original_bbox[0] + original_bbox[2]) // 2, 
+                                           (original_bbox[1] + original_bbox[3]) // 2)
+                    except Exception as e:
+                        print(f"计算原始文本边界框时出错: {str(e)}")
+                        # 使用估算的位置
+                        original_center = (pos_x + text_width // 2, pos_y + text_height // 2)
+                    
+                    # 计算斜体变换的系数 (倾斜程度)
+                    shear_factor = 0.2  # 控制斜体倾斜度
+                    
+                    # 创建一个带有alpha通道的新层来绘制斜体文本
+                    italic_layer = Image.new('RGBA', watermark_img.size, (255, 255, 255, 0))
+                    italic_draw = ImageDraw.Draw(italic_layer)
+                    
+                    # 尝试绘制文本，如果失败则处理编码问题
+                    try:
+                        italic_draw.text((pos_x, pos_y), text, font=font, fill=fill_color)
+                    except UnicodeEncodeError:
+                        print(f"绘制斜体文本时出现编码错误，尝试处理文本")
+                        # 尝试处理文本：替换非ASCII字符或使用简化文本
+                        processed_text = "".join([char if ord(char) < 128 else "?" for char in text])
+                        if processed_text:
+                            italic_draw.text((pos_x, pos_y), processed_text, font=font, fill=fill_color)
+                    except Exception as e:
+                        print(f"绘制斜体文本时出错: {str(e)}")
+                        # 如果无法绘制斜体，继续执行
+                        pass
+                    
+                    # 应用剪切变换
+                    # 计算新的尺寸，考虑到剪切后的扩展
+                    new_width = watermark_img.width + int(watermark_img.height * abs(shear_factor))
+                    
+                    # 应用Affine变换来实现斜体效果
+                    try:
+                        italic_layer = italic_layer.transform(
+                            (new_width, watermark_img.height),
+                            Image.AFFINE,
+                            (1, shear_factor, 0, 0, 1, 0),
+                            Image.BICUBIC
+                        )
+                        
+                        # 计算偏移量以保持文本居中
+                        offset_x = int((original_center[0] * shear_factor))
+                        
+                        # 将斜体层粘贴回主图像
+                        watermark_img.paste(
+                            italic_layer, 
+                            (offset_x, 0), 
+                            italic_layer.split()[3]  # 使用alpha通道作为掩码
+                        )
+                    except Exception as e:
+                        print(f"应用斜体变换时出错: {str(e)}")
+                        # 如果变换失败，尝试直接绘制文本作为回退
+                        try:
+                            draw.text((pos_x, pos_y), text, font=font, fill=fill_color)
+                        except:
+                            pass
+                else:
+                    # 正常绘制文本
+                    try:
+                        draw.text((pos_x, pos_y), text, font=font, fill=fill_color)
+                    except UnicodeEncodeError:
+                        print(f"绘制文本时出现编码错误，尝试处理文本")
+                        # 尝试处理文本：替换非ASCII字符或使用简化文本
+                        processed_text = "".join([char if ord(char) < 128 else "?" for char in text])
+                        if processed_text:
+                            draw.text((pos_x, pos_y), processed_text, font=font, fill=fill_color)
+                    except Exception as e:
+                        print(f"绘制文本时出错: {str(e)}")
+                        # 如果无法绘制，继续执行
+                        pass
+            except Exception as e:
+                print(f"绘制主文本时发生严重错误: {str(e)}")
+                # 忽略错误，继续执行
             
             # 合并图片
             result = Image.alpha_composite(img, watermark_img)
@@ -1218,15 +1468,10 @@ class WatermarkApp(QMainWindow):
             self.current_color = template.get('font_color', "#000000")
             self.color_preview.setStyleSheet(f"background-color: {self.current_color}; border: 1px solid #ccc;")
             
-            # 设置字体
-            font_family = template.get('font_family', "SimHei")
-            # 查找字体索引，如果不存在则保持当前值
-            index = self.font_family.findText(font_family)
-            if index >= 0:
-                self.font_family.setCurrentIndex(index)
+            # 字体选择器已移除，使用默认字体
             
             self.bold_checkbox.setChecked(template.get('bold', False))
-            self.italic_checkbox.setChecked(template.get('italic', False))
+            # 斜体功能已移除
             
             # 应用文本效果设置
             self.shadow_checkbox.setChecked(template.get('shadow_enabled', False))
