@@ -5,9 +5,9 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QFileDialog, QLabel, QListWidget, QListWidgetItem, QSlider, QComboBox,
     QLineEdit, QGridLayout, QSplitter, QGroupBox, QFormLayout, QCheckBox,
-    QFrame, QInputDialog, QMessageBox, QAction, QMenu, QMenuBar
+    QFrame, QInputDialog, QMessageBox, QAction, QMenu, QMenuBar, QColorDialog, QSizePolicy, QScrollArea
 )
-from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QBrush, QPen
+from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QBrush, QPen, QFontDatabase
 from PyQt5.QtCore import Qt, QPoint, QSize
 from PIL import Image, ImageDraw, ImageFont
 import sys
@@ -16,25 +16,48 @@ from PyQt5.QtGui import QImage
 class WatermarkApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        # 初始化实例变量
+        self.current_image_index = -1
+        self.images = []
+        self.watermark_pos = QPoint(100, 100)
+        self.dragging = False
+        self.drag_start = QPoint()
+        self.output_folder_path = ""
+        self.current_color = "#000000"
+        self.current_stroke_color = "#FFFFFF"
+        self.use_prefix = False
+        self.use_suffix = False
+        
+        # 新增图片水印相关变量
+        self.watermark_type = "text"  # text 或 image
+        self.image_watermark_path = ""
+        self.image_watermark = None
+        self.image_watermark_scale = 100  # 百分比
+        self.image_watermark_width = 100
+        self.image_watermark_height = 100
+        self.image_watermark_resize_method = "按百分比"
+        
         self.init_ui()
         self.load_last_settings()
         
     def init_ui(self):
-        # 设置窗口标题和大小
+        # 设置窗口标题和大小，增大初始尺寸以便更好地显示预览
         self.setWindowTitle("图片水印工具")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1400, 900)
         
         # 创建中央部件
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        # 创建主布局
+        # 创建主布局 - 使用QSplitter实现可调整大小的三面板布局
+        main_splitter = QSplitter(Qt.Horizontal)
         main_layout = QHBoxLayout(central_widget)
+        main_layout.addWidget(main_splitter)
         
         # 创建左侧面板（文件列表）
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
-        left_panel.setMaximumWidth(250)
+        left_panel.setMaximumWidth(280)
         
         # 文件操作按钮
         file_ops_layout = QHBoxLayout()
@@ -48,29 +71,44 @@ class WatermarkApp(QMainWindow):
         # 文件列表
         self.file_list = QListWidget()
         self.file_list.setViewMode(QListWidget.IconMode)
-        self.file_list.setIconSize(QSize(120, 120))
+        self.file_list.setIconSize(QSize(200, 200))
         self.file_list.setResizeMode(QListWidget.Adjust)
         self.file_list.setMovement(QListWidget.Static)
         self.file_list.itemClicked.connect(self.on_file_selected)
+        self.file_list.setSpacing(10)  # 增加缩略图之间的间距
         
         # 导出按钮
         self.export_btn = QPushButton("导出图片")
         self.export_btn.clicked.connect(self.export_images)
         self.export_btn.setEnabled(False)
         
+        # 输出文件夹选择
+        self.output_folder = QLineEdit()
+        self.output_folder.setReadOnly(True)
+        self.output_folder.setPlaceholderText("未选择输出文件夹")
+        
+        self.select_folder_btn = QPushButton("选择文件夹")
+        self.select_folder_btn.clicked.connect(self.select_output_folder)
+        
+        folder_layout = QHBoxLayout()
+        folder_layout.addWidget(self.output_folder)
+        folder_layout.addWidget(self.select_folder_btn)
+        
         left_layout.addLayout(file_ops_layout)
         left_layout.addWidget(QLabel("已导入图片:"))
         left_layout.addWidget(self.file_list)
+        left_layout.addWidget(QLabel("输出文件夹:"))
+        left_layout.addLayout(folder_layout)
         left_layout.addWidget(self.export_btn)
         
-        # 创建中间面板（预览）
+        # 创建中间面板（预览）- 大幅增加预览区域
         center_panel = QWidget()
         center_layout = QVBoxLayout(center_panel)
         
-        # 预览窗口
+        # 预览窗口，大幅增加最小尺寸以更好地显示水印效果
         self.preview_label = QLabel("预览窗口")
         self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setMinimumSize(400, 400)
+        self.preview_label.setMinimumSize(800, 700)  # 大幅增加预览窗口最小尺寸
         self.preview_label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #ccc;")
         self.preview_label.mousePressEvent = self.on_preview_mouse_press
         self.preview_label.mouseMoveEvent = self.on_preview_mouse_move
@@ -79,23 +117,69 @@ class WatermarkApp(QMainWindow):
         center_layout.addWidget(QLabel("预览:"))
         center_layout.addWidget(self.preview_label)
         
-        # 创建右侧面板（水印设置）
+        # 创建右侧面板（设置）
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
-        right_panel.setMaximumWidth(300)
+        right_panel.setMaximumWidth(350)
+        
+        # 创建滚动区域，放置所有设置项
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_area.setWidget(scroll_widget)
+        
+        # 水印类型选择
+        watermark_type_group = QGroupBox("水印类型")
+        watermark_type_layout = QHBoxLayout()
+        
+        self.text_watermark_radio = QCheckBox("文本水印")
+        self.text_watermark_radio.setChecked(True)
+        self.text_watermark_radio.stateChanged.connect(self.set_watermark_type)
+        
+        self.image_watermark_radio = QCheckBox("图片水印")
+        self.image_watermark_radio.stateChanged.connect(self.set_watermark_type)
+        
+        watermark_type_layout.addWidget(self.text_watermark_radio)
+        watermark_type_layout.addWidget(self.image_watermark_radio)
+        watermark_type_group.setLayout(watermark_type_layout)
+        scroll_layout.addWidget(watermark_type_group)
         
         # 文本水印设置
-        text_watermark_group = QGroupBox("文本水印设置")
+        self.text_watermark_group = QGroupBox("文本水印设置")
         text_watermark_layout = QFormLayout()
         
         self.watermark_text = QLineEdit("水印文字")
         self.watermark_text.textChanged.connect(self.update_preview)
+        
+        # 字体选择
+        self.font_family = QComboBox()
+        # 获取系统已安装字体
+        font_db = QFontDatabase()
+        for family in font_db.families():
+            self.font_family.addItem(family)
+        # 默认选择支持中文的字体
+        chinese_fonts = ["SimHei", "WenQuanYi Micro Hei", "Heiti TC", "Microsoft YaHei", "SimSun"]
+        for font in chinese_fonts:
+            if font in font_db.families():
+                self.font_family.setCurrentText(font)
+                break
+        self.font_family.currentTextChanged.connect(self.update_preview)
         
         self.font_size = QComboBox()
         for size in range(10, 72, 2):
             self.font_size.addItem(str(size))
         self.font_size.setCurrentText("24")
         self.font_size.currentTextChanged.connect(self.update_preview)
+        
+        # 粗体和斜体
+        style_layout = QHBoxLayout()
+        self.bold_checkbox = QCheckBox("粗体")
+        self.italic_checkbox = QCheckBox("斜体")
+        self.bold_checkbox.stateChanged.connect(self.update_preview)
+        self.italic_checkbox.stateChanged.connect(self.update_preview)
+        style_layout.addWidget(self.bold_checkbox)
+        style_layout.addWidget(self.italic_checkbox)
         
         self.transparency = QSlider(Qt.Horizontal)
         self.transparency.setRange(0, 100)
@@ -107,18 +191,130 @@ class WatermarkApp(QMainWindow):
         self.transparency_label = QLabel("透明度: 50%")
         self.transparency.valueChanged.connect(lambda value: self.transparency_label.setText(f"透明度: {value}%"))
         
-        # 字体颜色
-        self.font_color = QComboBox()
-        colors = {"黑色": "#000000", "白色": "#FFFFFF", "红色": "#FF0000", "蓝色": "#0000FF", "绿色": "#00FF00"}
-        for name, code in colors.items():
-            self.font_color.addItem(name, code)
-        self.font_color.currentIndexChanged.connect(self.update_preview)
+        # 高级颜色选择器
+        color_layout = QHBoxLayout()
+        self.color_preview = QLabel()
+        self.color_preview.setMinimumWidth(30)
+        self.color_preview.setStyleSheet("background-color: #000000; border: 1px solid #ccc;")
+        self.color_button = QPushButton("选择颜色")
+        self.color_button.clicked.connect(self.select_color)
+        self.current_color = "#000000"
+        color_layout.addWidget(self.color_preview)
+        color_layout.addWidget(self.color_button)
+        
+        # 文本效果
+        effects_group = QGroupBox("文本效果")
+        effects_layout = QFormLayout()
+        
+        # 阴影效果
+        self.shadow_checkbox = QCheckBox("添加阴影")
+        self.shadow_checkbox.stateChanged.connect(self.toggle_shadow_options)
+        effects_layout.addRow(self.shadow_checkbox)
+        
+        self.shadow_distance = QSlider(Qt.Horizontal)
+        self.shadow_distance.setRange(1, 10)
+        self.shadow_distance.setValue(2)
+        self.shadow_distance.setEnabled(False)
+        self.shadow_distance.valueChanged.connect(self.update_preview)
+        effects_layout.addRow("阴影距离:", self.shadow_distance)
+        
+        # 描边效果
+        self.stroke_checkbox = QCheckBox("添加描边")
+        self.stroke_checkbox.stateChanged.connect(self.toggle_stroke_options)
+        effects_layout.addRow(self.stroke_checkbox)
+        
+        self.stroke_width = QSlider(Qt.Horizontal)
+        self.stroke_width.setRange(1, 5)
+        self.stroke_width.setValue(1)
+        self.stroke_width.setEnabled(False)
+        self.stroke_width.valueChanged.connect(self.update_preview)
+        effects_layout.addRow("描边宽度:", self.stroke_width)
+        
+        self.stroke_color_button = QPushButton("描边颜色")
+        self.stroke_color_button.setEnabled(False)
+        self.stroke_color_button.clicked.connect(self.select_stroke_color)
+        self.stroke_color_preview = QLabel()
+        self.stroke_color_preview.setMinimumWidth(30)
+        self.stroke_color_preview.setStyleSheet("background-color: #FFFFFF; border: 1px solid #ccc;")
+        self.current_stroke_color = "#FFFFFF"
+        
+        stroke_color_layout = QHBoxLayout()
+        stroke_color_layout.addWidget(self.stroke_color_preview)
+        stroke_color_layout.addWidget(self.stroke_color_button)
+        effects_layout.addRow("描边颜色:", stroke_color_layout)
+        effects_group.setLayout(effects_layout)
         
         text_watermark_layout.addRow("水印文本:", self.watermark_text)
+        text_watermark_layout.addRow("字体:", self.font_family)
         text_watermark_layout.addRow("字体大小:", self.font_size)
+        text_watermark_layout.addRow("字体样式:", style_layout)
         text_watermark_layout.addRow(self.transparency_label, self.transparency)
-        text_watermark_layout.addRow("字体颜色:", self.font_color)
-        text_watermark_group.setLayout(text_watermark_layout)
+        text_watermark_layout.addRow("字体颜色:", color_layout)
+        text_watermark_layout.addRow(effects_group)
+        self.text_watermark_group.setLayout(text_watermark_layout)
+        scroll_layout.addWidget(self.text_watermark_group)
+        
+        # 图片水印设置
+        self.image_watermark_group = QGroupBox("图片水印设置")
+        image_watermark_layout = QFormLayout()
+        
+        # 选择图片按钮
+        self.select_image_btn = QPushButton("选择图片水印")
+        self.select_image_btn.clicked.connect(self.select_image_watermark)
+        image_watermark_layout.addRow(self.select_image_btn)
+        
+        # 显示已选择的图片路径
+        self.image_path_label = QLabel("未选择图片")
+        self.image_path_label.setWordWrap(True)
+        self.image_path_label.setMaximumHeight(40)
+        image_watermark_layout.addRow(self.image_path_label)
+        
+        # 图片水印透明度
+        self.image_transparency = QSlider(Qt.Horizontal)
+        self.image_transparency.setRange(0, 100)
+        self.image_transparency.setValue(50)
+        self.image_transparency.setTickPosition(QSlider.TicksBelow)
+        self.image_transparency.setTickInterval(10)
+        self.image_transparency.valueChanged.connect(self.update_preview)
+        
+        self.image_transparency_label = QLabel("透明度: 50%")
+        self.image_transparency.valueChanged.connect(lambda value: self.image_transparency_label.setText(f"透明度: {value}%"))
+        image_watermark_layout.addRow(self.image_transparency_label, self.image_transparency)
+        
+        # 图片大小调整
+        self.image_resize_method = QComboBox()
+        self.image_resize_method.addItem("按百分比")
+        self.image_resize_method.addItem("按宽度")
+        self.image_resize_method.addItem("按高度")
+        self.image_resize_method.currentIndexChanged.connect(self.toggle_image_resize_options)
+        image_watermark_layout.addRow("调整方式:", self.image_resize_method)
+        
+        self.image_percent_slider = QSlider(Qt.Horizontal)
+        self.image_percent_slider.setRange(10, 300)
+        self.image_percent_slider.setValue(100)
+        self.image_percent_slider.setTickPosition(QSlider.TicksBelow)
+        self.image_percent_slider.setTickInterval(10)
+        self.image_percent_slider.valueChanged.connect(self.update_image_watermark_scale)
+        self.image_percent_slider.valueChanged.connect(self.update_preview)
+        
+        self.image_percent_label = QLabel("大小: 100%")
+        image_watermark_layout.addRow(self.image_percent_label, self.image_percent_slider)
+        
+        self.image_width_input = QLineEdit()
+        self.image_width_input.setPlaceholderText("输入宽度")
+        self.image_width_input.setEnabled(False)
+        self.image_width_input.editingFinished.connect(self.update_image_size_from_input)
+        image_watermark_layout.addRow("宽度 (像素):", self.image_width_input)
+        
+        self.image_height_input = QLineEdit()
+        self.image_height_input.setPlaceholderText("输入高度")
+        self.image_height_input.setEnabled(False)
+        self.image_height_input.editingFinished.connect(self.update_image_size_from_input)
+        image_watermark_layout.addRow("高度 (像素):", self.image_height_input)
+        
+        self.image_watermark_group.setLayout(image_watermark_layout)
+        scroll_layout.addWidget(self.image_watermark_group)
+        self.image_watermark_group.hide()  # 默认隐藏图片水印设置
         
         # 位置设置
         position_group = QGroupBox("水印位置")
@@ -139,127 +335,126 @@ class WatermarkApp(QMainWindow):
             self.position_buttons.append(btn)
         
         position_group.setLayout(position_layout)
-        
-        # 尺寸调整设置
-        resize_group = QGroupBox("尺寸调整")
-        resize_layout = QFormLayout()
-        
-        self.resize_method = QComboBox()
-        self.resize_method.addItem("原始尺寸")
-        self.resize_method.addItem("按宽度")
-        self.resize_method.addItem("按高度")
-        self.resize_method.addItem("按百分比")
-        self.resize_method.currentIndexChanged.connect(self.toggle_resize_options)
-        resize_layout.addRow("调整方式:", self.resize_method)
-        
-        self.width_input = QLineEdit()
-        self.width_input.setPlaceholderText("输入宽度")
-        self.width_input.setEnabled(False)
-        resize_layout.addRow("宽度 (像素):", self.width_input)
-        
-        self.height_input = QLineEdit()
-        self.height_input.setPlaceholderText("输入高度")
-        self.height_input.setEnabled(False)
-        resize_layout.addRow("高度 (像素):", self.height_input)
-        
-        self.percent_slider = QSlider(Qt.Horizontal)
-        self.percent_slider.setRange(10, 200)
-        self.percent_slider.setValue(100)
-        self.percent_slider.setTickPosition(QSlider.TicksBelow)
-        self.percent_slider.setTickInterval(10)
-        self.percent_slider.setEnabled(False)
-        
-        self.percent_label = QLabel("缩放比例: 100%")
-        self.percent_slider.valueChanged.connect(lambda value: self.percent_label.setText(f"缩放比例: {value}%"))
-        
-        resize_layout.addRow(self.percent_label, self.percent_slider)
-        resize_group.setLayout(resize_layout)
+        scroll_layout.addWidget(position_group)
         
         # 导出设置
         export_group = QGroupBox("导出设置")
         export_layout = QFormLayout()
         
+        # 输出格式
         self.output_format = QComboBox()
         self.output_format.addItem("JPEG")
         self.output_format.addItem("PNG")
-        self.output_format.currentIndexChanged.connect(self.toggle_quality_settings)
+        self.output_format.currentTextChanged.connect(self.toggle_quality_settings)
         export_layout.addRow("输出格式:", self.output_format)
         
+        # JPEG质量设置
         self.quality_slider = QSlider(Qt.Horizontal)
-        self.quality_slider.setRange(0, 100)
+        self.quality_slider.setRange(1, 100)
         self.quality_slider.setValue(90)
         self.quality_slider.setTickPosition(QSlider.TicksBelow)
         self.quality_slider.setTickInterval(10)
         
-        self.quality_label = QLabel("JPEG质量: 90%")
-        self.quality_slider.valueChanged.connect(lambda value: self.quality_label.setText(f"JPEG质量: {value}%"))
-        
+        self.quality_label = QLabel("质量: 90%")
+        self.quality_slider.valueChanged.connect(lambda value: self.quality_label.setText(f"质量: {value}%"))
         export_layout.addRow(self.quality_label, self.quality_slider)
         
-        self.output_folder = QLineEdit()
-        self.output_folder.setReadOnly(True)
-        browse_btn = QPushButton("浏览...")
-        browse_btn.clicked.connect(self.select_output_folder)
+        # 图片尺寸调整
+        self.resize_method = QComboBox()
+        self.resize_method.addItem("原始尺寸")
+        self.resize_method.addItem("按宽度")
+        self.resize_method.addItem("按高度")
+        self.resize_method.addItem("按百分比")
+        self.resize_method.currentTextChanged.connect(self.toggle_resize_options)
+        export_layout.addRow("尺寸调整:", self.resize_method)
         
-        folder_layout = QHBoxLayout()
-        folder_layout.addWidget(self.output_folder)
-        folder_layout.addWidget(browse_btn)
-        export_layout.addRow("输出文件夹:", folder_layout)
+        # 宽度输入
+        self.width_input = QLineEdit()
+        self.width_input.setPlaceholderText("输入宽度")
+        self.width_input.setEnabled(False)
+        export_layout.addRow("宽度 (像素):", self.width_input)
         
-        self.preserve_filename = QCheckBox("保留原文件名")
+        # 高度输入
+        self.height_input = QLineEdit()
+        self.height_input.setPlaceholderText("输入高度")
+        self.height_input.setEnabled(False)
+        export_layout.addRow("高度 (像素):", self.height_input)
+        
+        # 百分比调整
+        self.percent_slider = QSlider(Qt.Horizontal)
+        self.percent_slider.setRange(10, 300)
+        self.percent_slider.setValue(100)
+        self.percent_slider.setTickPosition(QSlider.TicksBelow)
+        self.percent_slider.setTickInterval(10)
+        self.percent_slider.setEnabled(False)
+        
+        self.percent_label = QLabel("大小: 100%")
+        self.percent_slider.valueChanged.connect(lambda value: self.percent_label.setText(f"大小: {value}%"))
+        export_layout.addRow(self.percent_label, self.percent_slider)
+        
+        # 文件命名选项
+        self.preserve_filename = QCheckBox("保留原始文件名")
         self.preserve_filename.setChecked(True)
-        self.preserve_filename.stateChanged.connect(self.toggle_filename_options)
+        self.preserve_filename.stateChanged.connect(lambda state: self.toggle_filename_options(state))
         export_layout.addRow(self.preserve_filename)
         
-        self.prefix = QLineEdit("wm_")
+        # 文件前缀和后缀
+        self.prefix = QLineEdit()
+        self.prefix.setPlaceholderText("文件前缀")
         self.prefix.setEnabled(False)
         self.prefix.textChanged.connect(self.toggle_prefix_suffix)
-        export_layout.addRow("前缀:", self.prefix)
         
-        self.suffix = QLineEdit("_watermarked")
+        self.suffix = QLineEdit()
+        self.suffix.setPlaceholderText("文件后缀")
         self.suffix.setEnabled(False)
         self.suffix.textChanged.connect(self.toggle_prefix_suffix)
-        export_layout.addRow("后缀:", self.suffix)
+        
+        export_layout.addRow("文件前缀:", self.prefix)
+        export_layout.addRow("文件后缀:", self.suffix)
         
         export_group.setLayout(export_layout)
+        scroll_layout.addWidget(export_group)
         
-        # 模板管理
+        # 模板设置
         template_group = QGroupBox("模板管理")
-        template_layout = QVBoxLayout()
+        template_layout = QFormLayout()
         
+        # 模板选择下拉框
         self.template_list = QComboBox()
-        self.load_templates()
+        template_layout.addRow("选择模板:", self.template_list)
         
+        # 模板操作按钮
         template_buttons_layout = QHBoxLayout()
-        save_template_btn = QPushButton("保存模板")
-        save_template_btn.clicked.connect(self.save_template)
-        load_template_btn = QPushButton("加载模板")
-        load_template_btn.clicked.connect(self.load_template)
-        delete_template_btn = QPushButton("删除模板")
-        delete_template_btn.clicked.connect(self.delete_template)
+        self.save_template_btn = QPushButton("保存模板")
+        self.save_template_btn.clicked.connect(self.save_template)
+        self.load_template_btn = QPushButton("加载模板")
+        self.load_template_btn.clicked.connect(self.load_template)
+        self.delete_template_btn = QPushButton("删除模板")
+        self.delete_template_btn.clicked.connect(self.delete_template)
         
-        template_buttons_layout.addWidget(save_template_btn)
-        template_buttons_layout.addWidget(load_template_btn)
-        template_buttons_layout.addWidget(delete_template_btn)
-        
-        template_layout.addWidget(QLabel("可用模板:"))
-        template_layout.addWidget(self.template_list)
-        template_layout.addLayout(template_buttons_layout)
+        template_buttons_layout.addWidget(self.save_template_btn)
+        template_buttons_layout.addWidget(self.load_template_btn)
+        template_buttons_layout.addWidget(self.delete_template_btn)
+        template_layout.addRow(template_buttons_layout)
         
         template_group.setLayout(template_layout)
+        scroll_layout.addWidget(template_group)
+        scroll_layout.addStretch()
         
-        # 添加所有组件到右侧布局
-        right_layout.addWidget(text_watermark_group)
-        right_layout.addWidget(position_group)
-        right_layout.addWidget(resize_group)
-        right_layout.addWidget(export_group)
-        right_layout.addWidget(template_group)
-        right_layout.addStretch()
+        # 将滚动区域添加到右侧布局
+        right_layout.addWidget(scroll_area)
         
-        # 将所有面板添加到主布局
-        main_layout.addWidget(left_panel)
-        main_layout.addWidget(center_panel, 1)
-        main_layout.addWidget(right_panel)
+        # 使用Splitter替代固定宽度的布局
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.addWidget(left_panel)
+        main_splitter.addWidget(center_panel)
+        main_splitter.addWidget(right_panel)
+        
+        # 设置初始大小比例，给预览区域更多空间
+        main_splitter.setSizes([300, 800, 350])
+        
+        # 将Splitter添加到主布局
+        main_layout.addWidget(main_splitter)
         
         # 初始化变量
         self.images = []
@@ -270,6 +465,14 @@ class WatermarkApp(QMainWindow):
         self.output_folder_path = ""
         self.use_prefix = False
         self.use_suffix = False
+        self.watermark_type = "text"  # 默认使用文本水印
+        
+        # 图片水印相关变量初始化
+        self.image_watermark = None
+        self.image_watermark_path = ""
+        self.image_watermark_width = 0
+        self.image_watermark_height = 0
+        self.image_watermark_scale = 100  # 默认100%
         
         # 初始化质量设置显示
         self.toggle_quality_settings()
@@ -357,7 +560,7 @@ class WatermarkApp(QMainWindow):
                 
                 # 创建缩略图用于显示
                 thumbnail = img.copy()
-                thumbnail.thumbnail((120, 120))
+                thumbnail.thumbnail((200, 200))
                 
                 # 转换为QPixmap
                 try:
@@ -404,13 +607,12 @@ class WatermarkApp(QMainWindow):
         # 添加水印
         watermarked_img = self.add_watermark_to_image(img)
         
-        # 调整预览大小以适应窗口
+        # 调整预览大小以适应窗口，完全利用可用空间
         preview_size = self.preview_label.size()
-        preview_size = QSize(preview_size.width() - 20, preview_size.height() - 20)  # 留出边距
         
-        # 计算合适的显示大小
+        # 计算合适的显示大小，移除最大缩放限制，让图片尽可能大
         img_width, img_height = watermarked_img.size
-        scale = min(preview_size.width() / img_width, preview_size.height() / img_height, 1.0)
+        scale = min(preview_size.width() / img_width, preview_size.height() / img_height)  # 移除最大缩放限制，让图片完全填充预览区域
         new_width = int(img_width * scale)
         new_height = int(img_height * scale)
         
@@ -432,6 +634,88 @@ class WatermarkApp(QMainWindow):
             return
         self.preview_label.setPixmap(pixmap)
     
+    def set_watermark_type(self, state):
+        # 初始化按钮组（如果尚未初始化）
+        if not hasattr(self, 'watermark_type_buttons'):
+            self.watermark_type_buttons = [self.text_watermark_radio, self.image_watermark_radio]
+        
+        # 判断哪个复选框被触发
+        if self.sender() == self.text_watermark_radio:
+            if state == Qt.Checked:
+                self.watermark_type = "text"
+                self.image_watermark_radio.setChecked(False)
+                self.text_watermark_group.show()
+                self.image_watermark_group.hide()
+        elif self.sender() == self.image_watermark_radio:
+            if state == Qt.Checked:
+                self.watermark_type = "image"
+                self.text_watermark_radio.setChecked(False)
+                self.text_watermark_group.hide()
+                self.image_watermark_group.show()
+        
+        # 更新预览
+        self.update_preview()
+    
+    def select_image_watermark(self):
+        # 打开文件选择对话框，仅允许选择图片文件
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择图片水印", "", "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif)"
+        )
+        
+        if file_path:
+            try:
+                # 尝试打开图片
+                img = Image.open(file_path).convert('RGBA')
+                
+                # 保存图片水印信息
+                self.image_watermark_path = file_path
+                self.image_watermark = img
+                self.image_watermark_width, self.image_watermark_height = img.size
+                
+                # 更新UI显示
+                self.image_path_label.setText(os.path.basename(file_path))
+                self.image_width_input.setText(str(self.image_watermark_width))
+                self.image_height_input.setText(str(self.image_watermark_height))
+                
+                # 更新预览
+                self.update_preview()
+                
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"无法打开图片: {str(e)}")
+    
+    def toggle_image_resize_options(self):
+        method = self.image_resize_method.currentText()
+        
+        # 根据选择的调整方式启用对应的输入控件
+        self.image_percent_slider.setEnabled(method == "按百分比")
+        self.image_percent_label.setEnabled(method == "按百分比")
+        self.image_width_input.setEnabled(method == "按宽度")
+        self.image_height_input.setEnabled(method == "按高度")
+    
+    def update_image_watermark_scale(self, value):
+        self.image_watermark_scale = value
+        self.image_percent_label.setText(f"大小: {value}%")
+    
+    def update_image_size_from_input(self):
+        try:
+            if self.image_resize_method.currentText() == "按宽度":
+                new_width = int(self.image_width_input.text())
+                # 保持宽高比
+                scale = new_width / self.image_watermark_width
+                new_height = int(self.image_watermark_height * scale)
+                self.image_height_input.setText(str(new_height))
+            elif self.image_resize_method.currentText() == "按高度":
+                new_height = int(self.image_height_input.text())
+                # 保持宽高比
+                scale = new_height / self.image_watermark_height
+                new_width = int(self.image_watermark_width * scale)
+                self.image_width_input.setText(str(new_width))
+            
+            # 更新预览
+            self.update_preview()
+        except ValueError:
+            pass  # 忽略无效输入
+    
     def add_watermark_to_image(self, img):
         # 确保图片支持透明度
         if img.mode != 'RGBA':
@@ -439,80 +723,207 @@ class WatermarkApp(QMainWindow):
         
         # 创建一个可绘制的副本
         watermark_img = Image.new('RGBA', img.size, (255, 255, 255, 0))
-        draw = ImageDraw.Draw(watermark_img)
         
-        # 获取水印文本和设置
-        text = self.watermark_text.text()
-        if not text:
-            return img
-        
-        font_size = int(self.font_size.currentText())
-        transparency = self.transparency.value()
-        color_code = self.font_color.currentData()
-        
-        # 解析颜色
-        r = int(color_code[1:3], 16)
-        g = int(color_code[3:5], 16)
-        b = int(color_code[5:7], 16)
-        
-        # 创建字体
-        font = None
-        
-        # 尝试使用系统中支持中文的字体
-        # 1. 首先尝试Windows系统字体目录中的中文字体
-        if os.name == 'nt':  # Windows系统
-            windows_font_dir = r"C:\Windows\Fonts"
-            chinese_fonts = [
-                os.path.join(windows_font_dir, "simhei.ttf"),  # 黑体
-                os.path.join(windows_font_dir, "msyh.ttc"),    # 微软雅黑
-                os.path.join(windows_font_dir, "simsun.ttc"),  # 宋体
-                os.path.join(windows_font_dir, "msyhbd.ttc")   # 微软雅黑粗体
-            ]
+        # 根据水印类型添加水印
+        if self.watermark_type == "text":
+            draw = ImageDraw.Draw(watermark_img)
             
-            for font_path in chinese_fonts:
-                try:
-                    if os.path.exists(font_path):
-                        font = ImageFont.truetype(font_path, font_size)
-                        break
-                except:
-                    continue
-        
-        # 2. 如果没找到或不是Windows系统，尝试使用字体名称
-        if font is None:
-            font_names = [
-                "SimHei", "WenQuanYi Micro Hei", "Heiti TC", 
-                "Microsoft YaHei", "SimSun", "Arial Unicode MS"
-            ]
+            # 获取水印文本和设置
+            text = self.watermark_text.text()
+            if not text:
+                return img
             
-            for font_name in font_names:
+            font_size = int(self.font_size.currentText())
+            transparency = self.transparency.value()
+            
+            # 解析颜色（从新的颜色选择器获取）
+            color_code = self.current_color
+            r = int(color_code[1:3], 16)
+            g = int(color_code[3:5], 16)
+            b = int(color_code[5:7], 16)
+            
+            # 创建字体（从新的字体选择器获取）
+            font = None
+            font_family = self.font_family.currentText()
+            bold = self.bold_checkbox.isChecked()
+            italic = self.italic_checkbox.isChecked()
+            
+            # 尝试使用选择的字体
+            try:
+                # 首先尝试直接使用字体名称
+                font = ImageFont.truetype(font_family, font_size)
+            except:
+                # 如果直接使用字体名称失败，尝试查找字体文件
+                if os.name == 'nt':  # Windows系统
+                    windows_font_dir = r"C:\Windows\Fonts"
+                    # 尝试常见字体文件扩展名
+                    extensions = ['.ttf', '.ttc', '.otf']
+                    for ext in extensions:
+                        # 尝试不同的字体文件名格式
+                        font_files = [
+                            os.path.join(windows_font_dir, font_family.lower() + ext),
+                            os.path.join(windows_font_dir, font_family.replace(' ', '') + ext),
+                        ]
+                        for font_file in font_files:
+                            try:
+                                if os.path.exists(font_file):
+                                    font = ImageFont.truetype(font_file, font_size)
+                                    break
+                            except:
+                                continue
+                        if font is not None:
+                            break
+            
+            # 如果找不到选择的字体，回退到之前的逻辑
+            if font is None:
+                # 1. 尝试Windows系统字体目录中的中文字体
+                if os.name == 'nt':  # Windows系统
+                    windows_font_dir = r"C:\Windows\Fonts"
+                    chinese_fonts = [
+                        os.path.join(windows_font_dir, "simhei.ttf"),  # 黑体
+                        os.path.join(windows_font_dir, "msyh.ttc"),    # 微软雅黑
+                        os.path.join(windows_font_dir, "simsun.ttc"),  # 宋体
+                        os.path.join(windows_font_dir, "msyhbd.ttc")   # 微软雅黑粗体
+                    ]
+                    
+                    for font_path in chinese_fonts:
+                        try:
+                            if os.path.exists(font_path):
+                                font = ImageFont.truetype(font_path, font_size)
+                                break
+                        except:
+                            continue
+                
+                # 2. 如果没找到或不是Windows系统，尝试使用字体名称
+                if font is None:
+                    font_names = [
+                        "SimHei", "WenQuanYi Micro Hei", "Heiti TC", 
+                        "Microsoft YaHei", "SimSun", "Arial Unicode MS"
+                    ]
+                    
+                    for font_name in font_names:
+                        try:
+                            font = ImageFont.truetype(font_name, font_size)
+                            break
+                        except:
+                            continue
+                
+                # 3. 如果还是找不到，使用默认字体并记录警告
+                if font is None:
+                    print("警告: 无法加载支持中文的字体，可能导致中文显示异常")
+                    font = ImageFont.load_default()
+            
+            # 获取文本尺寸
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            
+            # 调整水印位置到图片坐标系
+            img_width, img_height = img.size
+            pos_x = int(self.watermark_pos.x() * img_width / (self.preview_label.width() - 20))
+            pos_y = int(self.watermark_pos.y() * img_height / (self.preview_label.height() - 20))
+            
+            # 准备填充颜色
+            fill_color = (r, g, b, int(255 * (100 - transparency) / 100))
+            
+            # 如果启用了描边效果
+            if self.stroke_checkbox.isChecked():
+                # 解析描边颜色
+                stroke_color_code = self.current_stroke_color
+                stroke_r = int(stroke_color_code[1:3], 16)
+                stroke_g = int(stroke_color_code[3:5], 16)
+                stroke_b = int(stroke_color_code[5:7], 16)
+                stroke_width = self.stroke_width.value()
+                
+                # 绘制描边（在文本周围绘制多个偏移的文本）
+                for x_offset in range(-stroke_width, stroke_width + 1):
+                    for y_offset in range(-stroke_width, stroke_width + 1):
+                        if x_offset != 0 or y_offset != 0:  # 避免重复绘制中心文本
+                            draw.text((pos_x + x_offset, pos_y + y_offset), text, font=font, 
+                                     fill=(stroke_r, stroke_g, stroke_b, int(255 * (100 - transparency) / 100)))
+            
+            # 如果启用了阴影效果
+            if self.shadow_checkbox.isChecked():
+                shadow_distance = self.shadow_distance.value()
+                # 绘制阴影
+                draw.text((pos_x + shadow_distance, pos_y + shadow_distance), text, font=font, 
+                         fill=(0, 0, 0, int(128 * (100 - transparency) / 100)))
+            
+            # 绘制主文本
+            draw.text((pos_x, pos_y), text, font=font, fill=fill_color)
+            
+            # 合并图片
+            result = Image.alpha_composite(img, watermark_img)
+            
+            return result
+        elif self.watermark_type == "image" and self.image_watermark:
+            # 调整水印图片大小
+            img_width, img_height = img.size
+            
+            # 根据选择的调整方式调整水印图片大小
+            resize_method = self.image_resize_method.currentText()
+            new_width = self.image_watermark_width
+            new_height = self.image_watermark_height
+            
+            if resize_method == "按百分比":
+                scale = self.image_watermark_scale / 100
+                new_width = int(self.image_watermark_width * scale)
+                new_height = int(self.image_watermark_height * scale)
+            elif resize_method == "按宽度" and self.image_width_input.text().strip():
                 try:
-                    font = ImageFont.truetype(font_name, font_size)
-                    break
-                except:
-                    continue
+                    new_width = int(self.image_width_input.text())
+                    # 保持宽高比
+                    scale = new_width / self.image_watermark_width
+                    new_height = int(self.image_watermark_height * scale)
+                except ValueError:
+                    pass
+            elif resize_method == "按高度" and self.image_height_input.text().strip():
+                try:
+                    new_height = int(self.image_height_input.text())
+                    # 保持宽高比
+                    scale = new_height / self.image_watermark_height
+                    new_width = int(self.image_watermark_width * scale)
+                except ValueError:
+                    pass
+            
+            # 调整水印图片大小
+            resized_watermark = self.image_watermark.resize((new_width, new_height), Image.LANCZOS)
+            
+            # 调整水印透明度
+            transparency = self.image_transparency.value()
+            if transparency < 100:
+                # 使用更高效的方法调整透明度
+                # 首先确保水印图片是RGBA模式
+                if resized_watermark.mode != 'RGBA':
+                    resized_watermark = resized_watermark.convert('RGBA')
+                
+                # 分解图像通道
+                r, g, b, a = resized_watermark.split()
+                # 计算新的透明度
+                new_transparency = int(255 * (100 - transparency) / 100)
+                # 应用新的透明度
+                a = a.point(lambda p: int(p * new_transparency / 255))
+                # 合并通道
+                resized_watermark = Image.merge('RGBA', (r, g, b, a))
+            
+            # 调整水印位置到图片坐标系
+            pos_x = int(self.watermark_pos.x() * img_width / (self.preview_label.width()))
+            pos_y = int(self.watermark_pos.y() * img_height / (self.preview_label.height()))
+            
+            # 确保水印在图片范围内
+            pos_x = max(0, min(pos_x, img_width - new_width))
+            pos_y = max(0, min(pos_y, img_height - new_height))
+            
+            # 将水印粘贴到目标图像上
+            watermark_img.paste(resized_watermark, (pos_x, pos_y), resized_watermark)
+            
+            # 合并图片
+            result = Image.alpha_composite(img, watermark_img)
+            
+            return result
         
-        # 3. 如果还是找不到，使用默认字体并记录警告
-        if font is None:
-            print("警告: 无法加载支持中文的字体，可能导致中文显示异常")
-            font = ImageFont.load_default()
-        
-        # 获取文本尺寸
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_width = bbox[2] - bbox[0]
-        text_height = bbox[3] - bbox[1]
-        
-        # 调整水印位置到图片坐标系
-        img_width, img_height = img.size
-        pos_x = int(self.watermark_pos.x() * img_width / (self.preview_label.width() - 20))
-        pos_y = int(self.watermark_pos.y() * img_height / (self.preview_label.height() - 20))
-        
-        # 绘制水印
-        draw.text((pos_x, pos_y), text, font=font, fill=(r, g, b, int(255 * (100 - transparency) / 100)))
-        
-        # 合并图片
-        result = Image.alpha_composite(img, watermark_img)
-        
-        return result
+        # 如果没有水印（文本为空或没有选择图片水印），直接返回原图
+        return img
     
     def on_preview_mouse_press(self, event):
         if event.button() == Qt.LeftButton and self.current_image_index >= 0:
@@ -580,6 +991,33 @@ class WatermarkApp(QMainWindow):
             self.output_folder_path = folder
             self.output_folder.setText(folder)
     
+    def toggle_shadow_options(self):
+        # 根据是否启用阴影效果来控制相关控件的可用性
+        self.shadow_distance.setEnabled(self.shadow_checkbox.isChecked())
+        self.update_preview()
+        
+    def toggle_stroke_options(self):
+        # 根据是否启用描边效果来控制相关控件的可用性
+        self.stroke_width.setEnabled(self.stroke_checkbox.isChecked())
+        self.stroke_color_button.setEnabled(self.stroke_checkbox.isChecked())
+        self.update_preview()
+        
+    def select_color(self):
+        # 打开颜色选择对话框
+        color = QColorDialog.getColor(QColor(self.current_color), self, "选择字体颜色")
+        if color.isValid():
+            self.current_color = color.name()
+            self.color_preview.setStyleSheet(f"background-color: {self.current_color}; border: 1px solid #ccc;")
+            self.update_preview()
+            
+    def select_stroke_color(self):
+        # 打开描边颜色选择对话框
+        color = QColorDialog.getColor(QColor(self.current_stroke_color), self, "选择描边颜色")
+        if color.isValid():
+            self.current_stroke_color = color.name()
+            self.stroke_color_preview.setStyleSheet(f"background-color: {self.current_stroke_color}; border: 1px solid #ccc;")
+            self.update_preview()
+            
     def toggle_filename_options(self, state):
         self.prefix.setEnabled(not state)
         self.suffix.setEnabled(not state)
@@ -701,12 +1139,20 @@ class WatermarkApp(QMainWindow):
             template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
             os.makedirs(template_dir, exist_ok=True)
             
-            # 保存模板设置，包括新添加的质量和尺寸调整设置
+            # 保存模板设置，包括新添加的高级文本水印设置
             template = {
                 'text': self.watermark_text.text(),
                 'font_size': self.font_size.currentText(),
                 'transparency': self.transparency.value(),
-                'font_color': self.font_color.currentIndex(),
+                'font_color': self.current_color,  # 使用新的颜色选择器值
+                'font_family': self.font_family.currentText(),
+                'bold': self.bold_checkbox.isChecked(),
+                'italic': self.italic_checkbox.isChecked(),
+                'shadow_enabled': self.shadow_checkbox.isChecked(),
+                'shadow_distance': self.shadow_distance.value(),
+                'stroke_enabled': self.stroke_checkbox.isChecked(),
+                'stroke_width': self.stroke_width.value(),
+                'stroke_color': self.current_stroke_color,
                 'position': (self.watermark_pos.x(), self.watermark_pos.y()),
                 'output_format': self.output_format.currentIndex(),
                 'quality': self.quality_slider.value(),  # JPEG质量
@@ -767,7 +1213,31 @@ class WatermarkApp(QMainWindow):
             self.watermark_text.setText(template.get('text', "水印文字"))
             self.font_size.setCurrentText(template.get('font_size', "24"))
             self.transparency.setValue(template.get('transparency', 50))
-            self.font_color.setCurrentIndex(template.get('font_color', 0))
+            
+            # 应用新的高级文本设置
+            self.current_color = template.get('font_color', "#000000")
+            self.color_preview.setStyleSheet(f"background-color: {self.current_color}; border: 1px solid #ccc;")
+            
+            # 设置字体
+            font_family = template.get('font_family', "SimHei")
+            # 查找字体索引，如果不存在则保持当前值
+            index = self.font_family.findText(font_family)
+            if index >= 0:
+                self.font_family.setCurrentIndex(index)
+            
+            self.bold_checkbox.setChecked(template.get('bold', False))
+            self.italic_checkbox.setChecked(template.get('italic', False))
+            
+            # 应用文本效果设置
+            self.shadow_checkbox.setChecked(template.get('shadow_enabled', False))
+            self.shadow_distance.setValue(template.get('shadow_distance', 2))
+            self.toggle_shadow_options()
+            
+            self.stroke_checkbox.setChecked(template.get('stroke_enabled', False))
+            self.stroke_width.setValue(template.get('stroke_width', 1))
+            self.current_stroke_color = template.get('stroke_color', "#FFFFFF")
+            self.stroke_color_preview.setStyleSheet(f"background-color: {self.current_stroke_color}; border: 1px solid #ccc;")
+            self.toggle_stroke_options()
             
             pos = template.get('position', (100, 100))
             self.watermark_pos = QPoint(*pos)
