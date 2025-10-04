@@ -9,7 +9,9 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtGui import QPixmap, QPainter, QColor, QFont, QIcon, QBrush, QPen
 from PyQt5.QtCore import Qt, QPoint, QSize
-from PIL import Image, ImageDraw, ImageFont, ImageQt
+from PIL import Image, ImageDraw, ImageFont
+import sys
+from PyQt5.QtGui import QImage
 
 class WatermarkApp(QMainWindow):
     def __init__(self):
@@ -138,6 +140,41 @@ class WatermarkApp(QMainWindow):
         
         position_group.setLayout(position_layout)
         
+        # 尺寸调整设置
+        resize_group = QGroupBox("尺寸调整")
+        resize_layout = QFormLayout()
+        
+        self.resize_method = QComboBox()
+        self.resize_method.addItem("原始尺寸")
+        self.resize_method.addItem("按宽度")
+        self.resize_method.addItem("按高度")
+        self.resize_method.addItem("按百分比")
+        self.resize_method.currentIndexChanged.connect(self.toggle_resize_options)
+        resize_layout.addRow("调整方式:", self.resize_method)
+        
+        self.width_input = QLineEdit()
+        self.width_input.setPlaceholderText("输入宽度")
+        self.width_input.setEnabled(False)
+        resize_layout.addRow("宽度 (像素):", self.width_input)
+        
+        self.height_input = QLineEdit()
+        self.height_input.setPlaceholderText("输入高度")
+        self.height_input.setEnabled(False)
+        resize_layout.addRow("高度 (像素):", self.height_input)
+        
+        self.percent_slider = QSlider(Qt.Horizontal)
+        self.percent_slider.setRange(10, 200)
+        self.percent_slider.setValue(100)
+        self.percent_slider.setTickPosition(QSlider.TicksBelow)
+        self.percent_slider.setTickInterval(10)
+        self.percent_slider.setEnabled(False)
+        
+        self.percent_label = QLabel("缩放比例: 100%")
+        self.percent_slider.valueChanged.connect(lambda value: self.percent_label.setText(f"缩放比例: {value}%"))
+        
+        resize_layout.addRow(self.percent_label, self.percent_slider)
+        resize_group.setLayout(resize_layout)
+        
         # 导出设置
         export_group = QGroupBox("导出设置")
         export_layout = QFormLayout()
@@ -145,7 +182,19 @@ class WatermarkApp(QMainWindow):
         self.output_format = QComboBox()
         self.output_format.addItem("JPEG")
         self.output_format.addItem("PNG")
+        self.output_format.currentIndexChanged.connect(self.toggle_quality_settings)
         export_layout.addRow("输出格式:", self.output_format)
+        
+        self.quality_slider = QSlider(Qt.Horizontal)
+        self.quality_slider.setRange(0, 100)
+        self.quality_slider.setValue(90)
+        self.quality_slider.setTickPosition(QSlider.TicksBelow)
+        self.quality_slider.setTickInterval(10)
+        
+        self.quality_label = QLabel("JPEG质量: 90%")
+        self.quality_slider.valueChanged.connect(lambda value: self.quality_label.setText(f"JPEG质量: {value}%"))
+        
+        export_layout.addRow(self.quality_label, self.quality_slider)
         
         self.output_folder = QLineEdit()
         self.output_folder.setReadOnly(True)
@@ -202,6 +251,7 @@ class WatermarkApp(QMainWindow):
         # 添加所有组件到右侧布局
         right_layout.addWidget(text_watermark_group)
         right_layout.addWidget(position_group)
+        right_layout.addWidget(resize_group)
         right_layout.addWidget(export_group)
         right_layout.addWidget(template_group)
         right_layout.addStretch()
@@ -220,6 +270,9 @@ class WatermarkApp(QMainWindow):
         self.output_folder_path = ""
         self.use_prefix = False
         self.use_suffix = False
+        
+        # 初始化质量设置显示
+        self.toggle_quality_settings()
         
         # 创建菜单
         self.create_menu()
@@ -307,11 +360,21 @@ class WatermarkApp(QMainWindow):
                 thumbnail.thumbnail((120, 120))
                 
                 # 转换为QPixmap
-                qimg = ImageQt.ImageQt(thumbnail)
-                pixmap = QPixmap.fromImage(qimg)
-                
-                item.setIcon(QIcon(pixmap))
-                self.file_list.addItem(item)
+                try:
+                    # 尝试直接使用PyQt5的QImage转换
+                    if thumbnail.mode == 'RGBA':
+                        data = thumbnail.tobytes("raw", "RGBA")
+                        q_image = QImage(data, thumbnail.width, thumbnail.height, QImage.Format_RGBA8888)
+                    else:
+                        data = thumbnail.tobytes("raw", "RGBX")
+                        q_image = QImage(data, thumbnail.width, thumbnail.height, QImage.Format_RGBX8888)
+                    pixmap = QPixmap.fromImage(q_image)
+                    item.setIcon(QIcon(pixmap))
+                    self.file_list.addItem(item)
+                except Exception as e:
+                    QMessageBox.warning(self, "错误", f"无法创建缩略图: {str(e)}")
+                    # 如果无法创建缩略图，仍添加文件但不显示缩略图
+                    self.file_list.addItem(item)
                 
             except Exception as e:
                 QMessageBox.warning(self, "错误", f"无法打开文件 {os.path.basename(file_path)}: {str(e)}")
@@ -355,8 +418,18 @@ class WatermarkApp(QMainWindow):
         resized_img = watermarked_img.resize((new_width, new_height))
         
         # 转换为QPixmap并显示
-        qimg = ImageQt.ImageQt(resized_img)
-        pixmap = QPixmap.fromImage(qimg)
+        try:
+            # 尝试直接使用PyQt5的QImage转换
+            if resized_img.mode == 'RGBA':
+                data = resized_img.tobytes("raw", "RGBA")
+                q_image = QImage(data, resized_img.width, resized_img.height, QImage.Format_RGBA8888)
+            else:
+                data = resized_img.tobytes("raw", "RGBX")
+                q_image = QImage(data, resized_img.width, resized_img.height, QImage.Format_RGBX8888)
+            pixmap = QPixmap.fromImage(q_image)
+        except Exception as e:
+            print(f"转换图像失败: {str(e)}")
+            return
         self.preview_label.setPixmap(pixmap)
     
     def add_watermark_to_image(self, img):
@@ -522,6 +595,21 @@ class WatermarkApp(QMainWindow):
         self.use_prefix = not self.prefix.text().strip() == ""
         self.use_suffix = not self.suffix.text().strip() == ""
     
+    def toggle_quality_settings(self):
+        # 仅当选择JPEG格式时启用质量设置
+        is_jpeg = self.output_format.currentText() == "JPEG"
+        self.quality_slider.setEnabled(is_jpeg)
+        self.quality_label.setEnabled(is_jpeg)
+    
+    def toggle_resize_options(self):
+        method = self.resize_method.currentText()
+        
+        # 根据选择的调整方式启用对应的输入控件
+        self.width_input.setEnabled(method == "按宽度")
+        self.height_input.setEnabled(method == "按高度")
+        self.percent_slider.setEnabled(method == "按百分比")
+        self.percent_label.setEnabled(method == "按百分比")
+    
     def export_images(self):
         if not self.images:
             return
@@ -542,6 +630,37 @@ class WatermarkApp(QMainWindow):
                 img = img_info['image'].copy()
                 watermarked_img = self.add_watermark_to_image(img)
                 
+                # 调整图片尺寸
+                resize_method = self.resize_method.currentText()
+                if resize_method != "原始尺寸":
+                    width, height = watermarked_img.size
+                    
+                    if resize_method == "按宽度":
+                        try:
+                            new_width = int(self.width_input.text())
+                            # 保持宽高比
+                            scale = new_width / width
+                            new_height = int(height * scale)
+                            watermarked_img = watermarked_img.resize((new_width, new_height), Image.LANCZOS)
+                        except ValueError:
+                            # 如果输入无效，跳过尺寸调整
+                            pass
+                    elif resize_method == "按高度":
+                        try:
+                            new_height = int(self.height_input.text())
+                            # 保持宽高比
+                            scale = new_height / height
+                            new_width = int(width * scale)
+                            watermarked_img = watermarked_img.resize((new_width, new_height), Image.LANCZOS)
+                        except ValueError:
+                            # 如果输入无效，跳过尺寸调整
+                            pass
+                    elif resize_method == "按百分比":
+                        scale = self.percent_slider.value() / 100
+                        new_width = int(width * scale)
+                        new_height = int(height * scale)
+                        watermarked_img = watermarked_img.resize((new_width, new_height), Image.LANCZOS)
+                
                 # 确定输出文件名
                 original_filename = os.path.basename(img_info['original_path'])
                 base_name, ext = os.path.splitext(original_filename)
@@ -556,11 +675,16 @@ class WatermarkApp(QMainWindow):
                 # 保存图片
                 output_path = os.path.join(self.output_folder_path, output_filename)
                 
-                # 根据输出格式保存
-                if self.output_format.currentText() == "JPEG" and watermarked_img.mode == 'RGBA':
-                    watermarked_img = watermarked_img.convert('RGB')
-                
-                watermarked_img.save(output_path)
+                # 根据输出格式和设置保存
+                if self.output_format.currentText() == "JPEG":
+                    if watermarked_img.mode == 'RGBA':
+                        watermarked_img = watermarked_img.convert('RGB')
+                    # 使用指定的JPEG质量
+                    quality = self.quality_slider.value()
+                    watermarked_img.save(output_path, quality=quality)
+                else:
+                    # PNG格式直接保存
+                    watermarked_img.save(output_path)
                 
             except Exception as e:
                 QMessageBox.warning(self, "错误", f"无法导出文件 {original_filename}: {str(e)}")
@@ -577,7 +701,7 @@ class WatermarkApp(QMainWindow):
             template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
             os.makedirs(template_dir, exist_ok=True)
             
-            # 保存模板设置
+            # 保存模板设置，包括新添加的质量和尺寸调整设置
             template = {
                 'text': self.watermark_text.text(),
                 'font_size': self.font_size.currentText(),
@@ -585,6 +709,11 @@ class WatermarkApp(QMainWindow):
                 'font_color': self.font_color.currentIndex(),
                 'position': (self.watermark_pos.x(), self.watermark_pos.y()),
                 'output_format': self.output_format.currentIndex(),
+                'quality': self.quality_slider.value(),  # JPEG质量
+                'resize_method': self.resize_method.currentIndex(),  # 尺寸调整方式
+                'width_input': self.width_input.text(),  # 宽度输入
+                'height_input': self.height_input.text(),  # 高度输入
+                'percent_value': self.percent_slider.value(),  # 百分比值
                 'preserve_filename': self.preserve_filename.isChecked(),
                 'prefix': self.prefix.text(),
                 'suffix': self.suffix.text()
@@ -644,12 +773,20 @@ class WatermarkApp(QMainWindow):
             self.watermark_pos = QPoint(*pos)
             
             self.output_format.setCurrentIndex(template.get('output_format', 0))
+            self.quality_slider.setValue(template.get('quality', 90))  # 加载JPEG质量设置
+            self.resize_method.setCurrentIndex(template.get('resize_method', 0))  # 加载尺寸调整方式
+            self.width_input.setText(template.get('width_input', ""))  # 加载宽度输入
+            self.height_input.setText(template.get('height_input', ""))  # 加载高度输入
+            self.percent_slider.setValue(template.get('percent_value', 100))  # 加载百分比值
+            
             self.preserve_filename.setChecked(template.get('preserve_filename', True))
             self.prefix.setText(template.get('prefix', "wm_"))
             self.suffix.setText(template.get('suffix', "_watermarked"))
             
             # 更新相关设置
             self.toggle_filename_options(self.preserve_filename.isChecked())
+            self.toggle_quality_settings()
+            self.toggle_resize_options()
             self.update_preview()
             
         except Exception as e:
