@@ -1385,9 +1385,11 @@ class WatermarkApp(QMainWindow):
         template_name, ok = QInputDialog.getText(self, "保存模板", "请输入模板名称:")
         
         if ok and template_name:
+            print(f"尝试保存模板: {template_name}")
             # 确保模板目录存在
             template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
             os.makedirs(template_dir, exist_ok=True)
+            print(f"模板目录: {template_dir}")
             
             # 保存模板设置，包括新添加的高级文本水印设置
             template = {
@@ -1395,9 +1397,7 @@ class WatermarkApp(QMainWindow):
                 'font_size': self.font_size.currentText(),
                 'transparency': self.transparency.value(),
                 'font_color': self.current_color,  # 使用新的颜色选择器值
-                'font_family': self.font_family.currentText(),
                 'bold': self.bold_checkbox.isChecked(),
-                'italic': self.italic_checkbox.isChecked(),
                 'shadow_enabled': self.shadow_checkbox.isChecked(),
                 'shadow_distance': self.shadow_distance.value(),
                 'stroke_enabled': self.stroke_checkbox.isChecked(),
@@ -1416,16 +1416,22 @@ class WatermarkApp(QMainWindow):
             }
             
             template_path = os.path.join(template_dir, f"{template_name}.json")
+            print(f"模板文件路径: {template_path}")
+            print(f"模板内容: {template}")
             
             try:
+                print("准备写入模板文件...")
                 with open(template_path, 'w', encoding='utf-8') as f:
                     json.dump(template, f, ensure_ascii=False, indent=4)
+                print("模板文件写入成功")
                 
                 # 更新模板列表
                 self.load_templates()
                 self.template_list.setCurrentText(template_name)
+                print("模板列表更新成功")
                 
             except Exception as e:
+                print(f"保存模板时出错: {str(e)}")
                 QMessageBox.warning(self, "错误", f"无法保存模板: {str(e)}")
     
     def load_templates(self):
